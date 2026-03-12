@@ -1,6 +1,8 @@
 # Optimization Problem Structure
 using JuMP, DiffOpt, Ipopt, Gurobi
 
+using PowerModels
+
 # Surrogate Model Architecture
 using Flux
 
@@ -15,10 +17,33 @@ struct TrainingData
 end  
 
 
-function formulate_monolithic()
+function formulate_monolithic(data)
     """
-    Function to formulate the MIQCQP problem.
+    Function to formulate the AC OPF MIQCQP problem.
     """
+    # Parse the file into a Julia Dictionary
+    # data = PowerModels.parse_file("case14.m")
+
+    model = Model()
+
+    # --- Variables ---
+    # Voltage Magnitude and Angle per bus
+    @variable(model, va[i in keys(data["bus"])])
+    @variable(model, vm[i in keys(data["bus"])], lower_bound = data["bus"][i]["vmin"], upper_bound = data["bus"][i]["vmax"])
+
+    # Real and Reactive Power per generator
+    @variable(model, pg[i in keys(data["gen"])])
+    @variable(model, qg[i in keys(data["gen"])])
+
+    # UNIT COMMITMENT: Binary status per generator
+    @variable(model, u[i in keys(data["gen"])], Bin)
+
+    # --- Constraints (Example: Power Limits) ---
+    for (i, gen) in data["gen"]
+        # P_min * u <= Pg <= P_max * u
+        @constraint(model, pg[i] >= gen["pmin"] * u[i])
+        @constraint(model, pg[i] <= gen["pmax"] * u[i])
+    end
 end
 
 
@@ -31,7 +56,8 @@ function solve_monolithic(model::JuMP.Model)
     """
     optimize!(model)
     
-    u = value.(model[u])
+    u = value.(model[:u])
+    x = value.(model[:x])
     
-    return 
+    return TrainingData(u, x)
 end
