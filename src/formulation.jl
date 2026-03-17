@@ -10,47 +10,13 @@ using Flux
 Here is where we will maintain the problem structure and the core functions to running this problem.
 """
 
-
 struct TrainingData
     u_bar::Vector{Float64}
     x_star::Vector{Float64}
 end  
 
 
-function formulate_monolithic(data)
-    """
-    Function to formulate the AC OPF MIQCQP problem.
-    """
-
-    # Parse the file into a Julia Dictionary
-    # data = PowerModels.parse_file("case14.m")
-
-    m = Model(Gurobi.Optimizer)
-
-
-    # --- Variables ---
-    # Voltage Magnitude and Angle per bus
-    @variable(m, va[i in keys(data["bus"])])
-    @variable(m, vm[i in keys(data["bus"])], lower_bound = data["bus"][i]["vmin"], upper_bound = data["bus"][i]["vmax"])
-
-    # Real and Reactive Power per generator
-    @variable(m, pg[i in keys(data["gen"])])
-    @variable(m, qg[i in keys(data["gen"])])
-
-    # UNIT COMMITMENT: Binary status per generator
-    @variable(m, u[i in keys(data["gen"])], Bin)
-
-    # --- Constraints (Example: Power Limits) ---
-    for (i, gen) in data["gen"]
-        # P_min * u <= Pg <= P_max * u
-        @constraint(m, pg[i] >= gen["pmin"] * u[i])
-        @constraint(m, pg[i] <= gen["pmax"] * u[i])
-    end
-
-    return m
-end
-
-function build_single_period_ac_uc(file_path::String)
+function _parse_file_data(file_path::String)
     # 1. Parse the data
     data = PowerModels.parse_file(file_path)
     
@@ -58,14 +24,15 @@ function build_single_period_ac_uc(file_path::String)
     PowerModels.standardize_cost_terms!(data, order=2)
     PowerModels.calc_thermal_limits!(data)
 
-    # 2. Initialize the JuMP Model
-    model = Model()
+    return data
+end
 
-    # Create dictionaries for easy iteration
-    buses = data["bus"]
-    gens = data["gen"]
-    branches = data["branch"]
-    loads = data["load"]
+function _add_acuc_var!(model::JuMP.Model, buses, branches, gens)
+    """
+    Adds single period ACUC variables
+    If mp == true, add multi-period OPF formulation variables
+    """
+    # single period opf
 
     # 3. Define Variables
     @variable(model, va[keys(buses)]) # Voltage angle
@@ -80,6 +47,46 @@ function build_single_period_ac_uc(file_path::String)
     @variable(model, q_fr[keys(branches)])
     @variable(model, p_to[keys(branches)])
     @variable(model, q_to[keys(branches)])
+
+end
+
+
+function _add_acuc_var!(model::JuMP.Model, buses, branches, gens; T::Vector{Any})
+    """
+    Adds mulit-period ACUC variables
+    """
+    # multi period opf
+
+    # 3. Define Variables
+    @variable(model, va[keys(buses), T]) # Voltage angle
+    @variable(model, buses[i]["vmin"] <= vm[i in keys(buses), T] <= buses[i]["vmax"]) # Voltage magnitude
+    
+    @variable(model, u[keys(gens), T], Bin) # UNIT COMMITMENT: Binary status
+    @variable(model, pg[keys(gens), T])     # Active power generation
+    @variable(model, qg[keys(gens), T])     # Reactive power generation
+
+    # Branch flow variables (from and to ends)
+    @variable(model, p_fr[keys(branches), T])
+    @variable(model, q_fr[keys(branches), T])
+    @variable(model, p_to[keys(branches), T])
+    @variable(model, q_to[keys(branches), T])
+end
+
+
+function build_single_period_ac_uc(file_path::String)
+    
+    data = _parse_file_data(file_path)
+
+    # 2. Initialize the JuMP Model
+    model = Model()
+
+    # Create dictionaries for easy iteration
+    buses = data["bus"]
+    gens = data["gen"]
+    branches = data["branch"]
+    loads = data["load"]
+
+    
 
     # 4. Objective Function (Minimize Cost)
     # Note: Using u[i] to handle the fixed no-load cost (c_0) when the unit is ON
@@ -167,7 +174,14 @@ end
 
 
 
-function build_multi_period_ac_uc(file_path::String, T::Int)
+function build_multi_period_ac_uc(file_path::String, demand_curve::Vector{Real})
+    """
+    * file_path::String : path to the .m file containing the OPF data
+    * demand_curve::Vector{Any} : vector to define the scaled baseline demand to generate a demand curve
+    Akin to ExaModelsPower.jl
+    """
+    
+    
     data = PowerModels.parse_file(file_path)
     PowerModels.standardize_cost_terms!(data, order=2)
     PowerModels.calc_thermal_limits!(data)
@@ -178,6 +192,8 @@ function build_multi_period_ac_uc(file_path::String, T::Int)
         gen["ramp_down"] = gen["pmax"] * 0.3
         gen["startup_cost"] = 500.0
     end
+
+    T = length(demand_curve)
 
     model = Model()
     buses = data["bus"]; gens = data["gen"]; branches = data["branch"]; loads = data["load"]
