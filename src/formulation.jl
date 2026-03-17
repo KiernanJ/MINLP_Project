@@ -15,8 +15,15 @@ struct TrainingData
     x_star::Vector{Float64}
 end  
 
+struct MatpowerData
+    buses::Dict{String, Any}
+    gens::Dict{String, Any}
+    branches::Dict{String, Any}
+    loads::Dict{String, Any}
+end
 
-function _parse_file_data(file_path::String)
+
+function _parse_file_data(file_path::String)::MatpowerData
     # 1. Parse the data
     data = PowerModels.parse_file(file_path)
     
@@ -24,15 +31,24 @@ function _parse_file_data(file_path::String)
     PowerModels.standardize_cost_terms!(data, order=2)
     PowerModels.calc_thermal_limits!(data)
 
-    return data
+    return MatpowerData(data["bus"], data["gen"], data["branch"], data["load"])
 end
 
-function _add_acuc_var!(model::JuMP.Model, buses, branches, gens)
+function _unpack_matpowerdata(data::MatpowerData)
+    buses = data.buses
+    gens = data.gens
+    branches = data.branches
+    loads = data.loads
+    return buses, gens, branches, loads
+end
+
+function _add_acuc_var!(model::JuMP.Model, data::MatpowerData)
     """
     Adds single period ACUC variables
     If mp == true, add multi-period OPF formulation variables
     """
     # single period opf
+    buses, gens, branches, _ = _unpack_matpowerdata(data)
 
     # 3. Define Variables
     @variable(model, va[keys(buses)]) # Voltage angle
@@ -50,11 +66,12 @@ function _add_acuc_var!(model::JuMP.Model, buses, branches, gens)
 end
 
 
-function _add_acuc_var!(model::JuMP.Model, buses, branches, gens; T::Vector{Any})
+function _add_acuc_var!(model::JuMP.Model, data::MatpowerData; T::Vector{Any})
     """
     Adds mulit-period ACUC variables
     """
     # multi period opf
+    buses, gens, branches, _ = _unpack_matpowerdata(data)
 
     # 3. Define Variables
     @variable(model, va[keys(buses), T]) # Voltage angle
@@ -71,10 +88,12 @@ function _add_acuc_var!(model::JuMP.Model, buses, branches, gens; T::Vector{Any}
     @variable(model, q_to[keys(branches), T])
 end
 
-function _add_mincost_obj!(model::JuMP.Model, gens)
+function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData)
     """
     Add min cost objective function
     """
+
+    _, gens, _, _ = _unpack_matpowerdata(data)
 
     @objective(model, Min, sum(
         gens[i]["cost"][1] * pg[i]^2 + 
@@ -84,10 +103,14 @@ function _add_mincost_obj!(model::JuMP.Model, gens)
 end
 
 
-function _add_mincost_obj!(model::JuMP.Model, gens; T::Vector{Any})
+function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData; T::Vector{Any})
     """
     Add min cost objective function for mp-ac-uc-opf
     """
+
+
+    _, gens, _, _ = _unpack_matpowerdata(data)
+
 
     @objective(model, Min, sum( sum(
         gens[i]["cost"][1] * pg[i, t]^2 + 
@@ -96,10 +119,36 @@ function _add_mincost_obj!(model::JuMP.Model, gens; T::Vector{Any})
         )) for t in T)
 end
 
-function _add_polar_branchflow!(model::JuMP.Model, branches)
+function _add_ref_limits!(model::JuMP.Model, data::MatpowerData)
+    buses, _, _, _ = _unpack_matpowerdata(data)
+
+    # Reference Bus Angle
+    ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
+    for i in ref_buses
+        @constraint(model, va[i] == 0.0)
+    end
+end
+
+function _add_gen_limits!(model::JuMP.Model, data::MatpowerData)
+    
+    _, gens, _, _ = _unpack_matpowerdata(data)
+
+    # Generator Operational Limits tied to Commitment Status
+    for (i, gen) in gens
+        @constraint(model, pg[i] >= gen["pmin"] * u[i])
+        @constraint(model, pg[i] <= gen["pmax"] * u[i])
+        @constraint(model, qg[i] >= gen["qmin"] * u[i])
+        @constraint(model, qg[i] <= gen["qmax"] * u[i])
+    end
+end
+
+function _add_polar_branchflow!(model::JuMP.Model, data::MatpowerData)
     """
     Add branch flows in polar coordinates
     """
+
+
+    _, _, branches, _ = _unpack_matpowerdata(data)
 
     # Branch Power Flow Constraints (AC Polar Formulation)
     for (i, branch) in branches
@@ -137,41 +186,9 @@ function _add_polar_branchflow!(model::JuMP.Model, branches)
     end
 end
 
+function _add_node_bal!(model::JuMP.Model, data::MatpowerData)
 
-function build_single_period_ac_uc(file_path::String)
-    
-    data = _parse_file_data(file_path)
-
-    # 2. Initialize the JuMP Model
-    model = Model()
-
-    # Create dictionaries for easy iteration
-    buses = data["bus"]
-    gens = data["gen"]
-    branches = data["branch"]
-    loads = data["load"]
-
-    _add_acuc_var!(model, buses, brances, gens)
-
-    _add_mincost_obj!(model, gens)
-
-    # 5. Constraints
-    
-    # Reference Bus Angle
-    ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
-    for i in ref_buses
-        @constraint(model, va[i] == 0.0)
-    end
-
-    # Generator Operational Limits tied to Commitment Status
-    for (i, gen) in gens
-        @constraint(model, pg[i] >= gen["pmin"] * u[i])
-        @constraint(model, pg[i] <= gen["pmax"] * u[i])
-        @constraint(model, qg[i] >= gen["qmin"] * u[i])
-        @constraint(model, qg[i] <= gen["qmax"] * u[i])
-    end
-
-    _add_polar_branchflow!(model, branches)
+    buses, gens, branches, loads = _unpack_matpowerdata(data)
 
     # Nodal Power Balance (Kirchhoff's Current Law)
     for (i, bus) in buses
@@ -194,8 +211,37 @@ function build_single_period_ac_uc(file_path::String)
             sum(q_fr[b] for b in br_fr; init=0.0) + sum(q_to[b] for b in br_to; init=0.0)
         )
     end
+end
 
-    return model, data
+
+function build_single_period_ac_uc(file_path::String)
+    
+    data = _parse_file_data(file_path)
+
+    # Create dictionaries for easy iteration
+    buses = data.buses
+    gens = data.gens
+    branches = data.branches
+    loads = data.loads
+
+    # 2. Initialize the JuMP Model
+    model = Model()
+
+    _add_acuc_var!(model, data)
+
+    _add_mincost_obj!(model, data)
+
+    # 5. Constraints
+    
+
+
+    _add_gen_limits!(model, data)
+
+    _add_polar_branchflow!(model, data)
+
+    _add_node_bal!(model, data)
+
+    return model
 end
 
 
