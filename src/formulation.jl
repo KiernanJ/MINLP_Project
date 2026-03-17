@@ -143,22 +143,6 @@ function _add_acuc_var_rectangular!(model::JuMP.Model, data::MatpowerData, T::Ve
 end
 
 
-# function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData)
-#     """
-#     Add min cost objective function
-#     """
-
-#     # _, gens, _, _ = _unpack_matpowerdata(data)
-#     buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
-
-#     @objective(model, Min, sum(
-#         gens[i]["cost"][1] * model[:pg][i]^2 + 
-#         gens[i]["cost"][2] * model[:pg][i] + 
-#         gens[i]["cost"][3] * model[:u][i] for i in keys(gens)
-#     ))
-# end
-
-
 function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData, T::Vector{Int64})
     """
     Add min cost objective function for mp-ac-uc-opf
@@ -298,21 +282,21 @@ function _add_rectangular_branchflow!(model::JuMP.Model, data::MatpowerData, T::
 end
 
 
-function _add_node_bal_polar!(model::JuMP.Model, data::MatpowerData, T::Vector{Int64})
+function _add_node_bal_polar!(model::JuMP.Model, data::MatpowerData, demand_curve::Vector{Float64})
 
     # buses, gens, branches, loads, shunts = _unpack_matpowerdata(data)
     buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Nodal Power Balance (Kirchhoff's Current Law)
-    for t in T, (i, bus) in buses
+    for (t, val) in enumerate(demand_curve), (i, bus) in buses
         # Find all components connected to this bus
         bus_loads = [l for (k,l) in loads if string(l["load_bus"]) == i]
         bus_gens = [k for (k,g) in gens if string(g["gen_bus"]) == i]
         br_fr = [k for (k,b) in branches if string(b["f_bus"]) == i]
         br_to = [k for (k,b) in branches if string(b["t_bus"]) == i]
 
-        pd = sum(l["pd"] for l in bus_loads; init=0.0)
-        qd = sum(l["qd"] for l in bus_loads; init=0.0)
+        pd = sum(l["pd"] for l in bus_loads; init=0.0)*val
+        qd = sum(l["qd"] for l in bus_loads; init=0.0)*val
         
         local gs
         local bs
@@ -336,21 +320,21 @@ function _add_node_bal_polar!(model::JuMP.Model, data::MatpowerData, T::Vector{I
 end
 
 
-function _add_node_bal_rectangular!(model::JuMP.Model, data::MatpowerData, T::Vector{Int64})
+function _add_node_bal_rectangular!(model::JuMP.Model, data::MatpowerData, demand_curve::Vector{Int64})
 
     # buses, gens, branches, loads, shunts = _unpack_matpowerdata(data)
     buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Nodal Power Balance (Kirchhoff's Current Law)
-    for t in T, (i, bus) in buses
+    for (t, val) in enumerate(demand_curve), (i, bus) in buses
         # Find all components connected to this bus
         bus_loads = [l for (k,l) in loads if string(l["load_bus"]) == i]
         bus_gens = [k for (k,g) in gens if string(g["gen_bus"]) == i]
         br_fr = [k for (k,b) in branches if string(b["f_bus"]) == i]
         br_to = [k for (k,b) in branches if string(b["t_bus"]) == i]
 
-        pd = sum(l["pd"] for l in bus_loads; init=0.0)
-        qd = sum(l["qd"] for l in bus_loads; init=0.0)
+        pd = sum(l["pd"] for l in bus_loads; init=0.0)*val
+        qd = sum(l["qd"] for l in bus_loads; init=0.0)*val
         
         local gs
         local bs
@@ -374,18 +358,9 @@ function _add_node_bal_rectangular!(model::JuMP.Model, data::MatpowerData, T::Ve
 end
 
 
-function build_single_period_ac_uc_polar(file_path::String)
-    
+function build_single_period_ac_uc_polar(file_path::String)    
     data = _parse_file_data(file_path)
     T = [1]
-    # data_s = _parse_file_data_shunt(file_path)
-
-    # Create dictionaries for easy iteration
-    # buses = data.buses
-    # gens = data.gens
-    # branches = data.branches
-    # loads = data.loads
-
     # Initialize the JuMP Model
     model = Model(Gurobi.Optimizer)
 
@@ -400,7 +375,7 @@ function build_single_period_ac_uc_polar(file_path::String)
 
     _add_gen_limits!(model, data, T)
 
-    _add_polar_branchflow!(model, data, [1])
+    _add_polar_branchflow!(model, data, T)
 
     _add_node_bal_polar!(model, data, T)
 
@@ -409,16 +384,8 @@ end
 
 
 function build_single_period_ac_uc_rectangular(file_path::String)
-    
     data = _parse_file_data(file_path)
     T = [1]
-    # data_s = _parse_file_data_shunt(file_path)
-
-    # Create dictionaries for easy iteration
-    # buses = data.buses
-    # gens = data.gens
-    # branches = data.branches
-    # loads = data.loads
 
     # Initialize the JuMP Model
     model = Model(Gurobi.Optimizer)
@@ -441,6 +408,80 @@ function build_single_period_ac_uc_rectangular(file_path::String)
     return model
 end
 
+function build_mp_ac_uc_polar(file_path::String, demand_curve::Vector{Float64})
+    """
+    demand_curve::Vector{Float64} - scaled demand levels for each T
+    akin to ExaModelsPower
+    """
+    data = _parse_file_data(file_path)
+    T = [i for (i,val) in enumerate(demand_curve)]
+
+    # Initialize the JuMP Model
+    model = Model(Gurobi.Optimizer)
+
+    # Add variables 
+    _add_acuc_var_polar!(model, data, T)
+
+    # Add objective
+    _add_mincost_obj!(model, data, T)
+
+    # Add constraints
+    _add_ref_limits_polar!(model, data, T)
+
+    _add_gen_limits!(model, data, T)
+
+    _add_polar_branchflow!(model, data, T)
+
+    _add_node_bal_polar!(model, data, demand_curve)
+
+    return model
+end
+
+function build_mp_ac_uc_rectangular(file_path::String, demand_curve::Vector{Float64})
+    """
+    demand_curve::Vector{Float64} - scaled demand levels for each T
+    akin to ExaModelsPower
+    """
+    data = _parse_file_data(file_path)
+    T = [i for (i, _) in enumerate(demand_curve)]
+
+    # Initialize the JuMP Model
+    model = Model(Gurobi.Optimizer)
+
+    # Add variables 
+    _add_acuc_var_rectangular!(model, data, T)
+
+    # Add objective
+    _add_mincost_obj!(model, data, T)
+
+    # Add constraints
+
+    _add_ref_limits_rectangular!(model, data, T)
+    _add_gen_limits!(model, data, T)
+
+    _add_rectangular_branchflow!(model, data, T)
+
+    _add_node_bal_rectangular!(model, data, demand_curve)
+
+    return model
+end
+
+
+function ac_uc(file_path::String, type="Rectangular")
+    if type == "Rectangular"
+        return build_single_period_ac_uc_rectangular(file_path)
+    else
+        return build_single_period_ac_uc_polar(file_path)
+    end
+end
+
+function mp_ac_uc(file_path::String, demand_curve::Vector{Float64}, type="Rectangular")
+    if type == "Rectangular"
+        return build_mp_ac_uc_rectangular(file_path, demand_curve)
+    else
+        return build_mp_ac_uc_polar(file_path, demand_curve)
+    end
+end
 
 # function build_multi_period_ac_uc(file_path::String, demand_curve::Vector{Real})
 #     """
@@ -521,19 +562,3 @@ end
 #     return model, data
 # end
 
-
-
-function solve_monolithic(model::JuMP.Model)
-    """
-    Function to gather training data for the convex MIQCQP.
-        model - JuMP model containing the monolithic MIQCP
-    Returns:
-        training_data - mapping of the fixed parameters \bar{u} --> x*
-    """
-    optimize!(model)
-    
-    u = value.(model[:u])
-    x = value.(model[:x])
-    
-    return TrainingData(u, x)
-end
