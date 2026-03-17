@@ -66,7 +66,7 @@ function _add_acuc_var!(model::JuMP.Model, data::MatpowerData)
 end
 
 
-function _add_acuc_var!(model::JuMP.Model, data::MatpowerData; T::Vector{Any})
+function _add_acuc_var!(model::JuMP.Model, data::MatpowerData, T::Vector{Any})
     """
     Adds mulit-period ACUC variables
     """
@@ -96,14 +96,14 @@ function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData)
     _, gens, _, _ = _unpack_matpowerdata(data)
 
     @objective(model, Min, sum(
-        gens[i]["cost"][1] * pg[i]^2 + 
-        gens[i]["cost"][2] * pg[i] + 
-        gens[i]["cost"][3] * u[i] for i in keys(gens)
+        gens[i]["cost"][1] * model[:pg][i]^2 + 
+        gens[i]["cost"][2] * model[:pg][i] + 
+        gens[i]["cost"][3] * model[:u][i] for i in keys(gens)
     ))
 end
 
 
-function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData; T::Vector{Any})
+function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData, T::Vector{Any})
     """
     Add min cost objective function for mp-ac-uc-opf
     """
@@ -113,9 +113,9 @@ function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData; T::Vector{Any}
 
 
     @objective(model, Min, sum( sum(
-        gens[i]["cost"][1] * pg[i, t]^2 + 
-        gens[i]["cost"][2] * pg[i, t] + 
-        gens[i]["cost"][3] * u[i, t] for i in keys(gens)
+        gens[i]["cost"][1] * model[:pg][i, t]^2 + 
+        gens[i]["cost"][2] * model[:pg][i, t] + 
+        gens[i]["cost"][3] * model[:u][i, t] for i in keys(gens)
         )) for t in T)
 end
 
@@ -125,7 +125,7 @@ function _add_ref_limits!(model::JuMP.Model, data::MatpowerData)
     # Reference Bus Angle
     ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
     for i in ref_buses
-        @constraint(model, va[i] == 0.0)
+        @constraint(model, model[:va][i] == 0.0)
     end
 end
 
@@ -135,10 +135,10 @@ function _add_gen_limits!(model::JuMP.Model, data::MatpowerData)
 
     # Generator Operational Limits tied to Commitment Status
     for (i, gen) in gens
-        @constraint(model, pg[i] >= gen["pmin"] * u[i])
-        @constraint(model, pg[i] <= gen["pmax"] * u[i])
-        @constraint(model, qg[i] >= gen["qmin"] * u[i])
-        @constraint(model, qg[i] <= gen["qmax"] * u[i])
+        @constraint(model, model[:pg][i] >= gen["pmin"] * model[:u][i])
+        @constraint(model, model[:pg][i] <= gen["pmax"] * model[:u][i])
+        @constraint(model, model[:qg][i] >= gen["qmin"] * model[:u][i])
+        @constraint(model, model[:qg][i] <= gen["qmax"] * model[:u][i])
     end
 end
 
@@ -163,26 +163,26 @@ function _add_polar_branchflow!(model::JuMP.Model, data::MatpowerData)
         tm = branch["tap"]
         
         # From-side flows
-        @NLconstraint(model, p_fr[i] ==  (g + g_fr)/tm^2 * vm[f_bus]^2 + 
-            (-g*tr + b*ti)/tm^2 * (vm[f_bus]*vm[t_bus]*cos(va[f_bus]-va[t_bus])) + 
-            (-b*tr - g*ti)/tm^2 * (vm[f_bus]*vm[t_bus]*sin(va[f_bus]-va[t_bus])))
+        @NLconstraint(model, model[:p_fr][i] ==  (g + g_fr)/tm^2 * model[:vm][f_bus]^2 + 
+            (-g*tr + b*ti)/tm^2 * (model[:vm][f_bus] * model[:vm][t_bus] * cos(model[:va][f_bus] - model[:va][t_bus])) + 
+            (-b*tr - g*ti)/tm^2 * (model[:vm][f_bus] * model[:vm][t_bus] * sin(model[:va][f_bus] - model[:va][t_bus])))
             
-        @NLconstraint(model, q_fr[i] == -(b + b_fr)/tm^2 * vm[f_bus]^2 - 
-            (-b*tr - g*ti)/tm^2 * (vm[f_bus]*vm[t_bus]*cos(va[f_bus]-va[t_bus])) + 
-            (-g*tr + b*ti)/tm^2 * (vm[f_bus]*vm[t_bus]*sin(va[f_bus]-va[t_bus])))
+        @NLconstraint(model, model[:q_fr][i] == -(b + b_fr)/tm^2 * model[:vm][f_bus]^2 - 
+            (-b*tr - g*ti)/tm^2 * (model[:vm][f_bus] * model[:vm][t_bus] * cos(model[:va][f_bus] - model[:va][t_bus])) + 
+            (-g*tr + b*ti)/tm^2 * (model[:vm][f_bus] * model[:vm][t_bus] * sin(model[:va][f_bus] - model[:va][t_bus])))
 
         # To-side flows
-        @NLconstraint(model, p_to[i] ==  (g + g_to) * vm[t_bus]^2 + 
-            (-g*tr - b*ti)/tm^2 * (vm[t_bus]*vm[f_bus]*cos(va[t_bus]-va[f_bus])) + 
-            (-b*tr + g*ti)/tm^2 * (vm[t_bus]*vm[f_bus]*sin(va[t_bus]-va[f_bus])))
+        @NLconstraint(model, model[:p_to][i] ==  (g + g_to) * model[:vm][t_bus]^2 + 
+            (-g*tr - b*ti)/tm^2 * (model[:vm][t_bus] * model[:vm][f_bus] * cos(model[:va][t_bus] - model[:va][f_bus])) + 
+            (-b*tr + g*ti)/tm^2 * (model[:vm][t_bus] * model[:vm][f_bus] * sin(model[:va][t_bus] - model[:va][f_bus])))
             
-        @NLconstraint(model, q_to[i] == -(b + b_to) * vm[t_bus]^2 - 
-            (-b*tr + g*ti)/tm^2 * (vm[t_bus]*vm[f_bus]*cos(va[t_bus]-va[f_bus])) + 
-            (-g*tr - b*ti)/tm^2 * (vm[t_bus]*vm[f_bus]*sin(va[t_bus]-va[f_bus])))
+        @NLconstraint(model, model[:q_to][i] == -(b + b_to) * model[:vm][t_bus]^2 - 
+            (-b*tr + g*ti)/tm^2 * (model[:vm][t_bus] * model[:vm][f_bus] * cos(model[:va][t_bus] - model[:va][f_bus])) + 
+            (-g*tr - b*ti)/tm^2 * (model[:vm][t_bus] * model[:vm][f_bus] * sin(model[:va][t_bus] - model[:va][f_bus])))
             
         # Thermal Limits
-        @constraint(model, p_fr[i]^2 + q_fr[i]^2 <= branch["rate_a"]^2)
-        @constraint(model, p_to[i]^2 + q_to[i]^2 <= branch["rate_a"]^2)
+        @constraint(model, model[:p_fr][i]^2 + model[:q_fr][i]^2 <= branch["rate_a"]^2)
+        @constraint(model, model[:p_to][i]^2 + model[:q_to][i]^2 <= branch["rate_a"]^2)
     end
 end
 
@@ -219,22 +219,21 @@ function build_single_period_ac_uc(file_path::String)
     data = _parse_file_data(file_path)
 
     # Create dictionaries for easy iteration
-    buses = data.buses
-    gens = data.gens
-    branches = data.branches
-    loads = data.loads
+    # buses = data.buses
+    # gens = data.gens
+    # branches = data.branches
+    # loads = data.loads
 
-    # 2. Initialize the JuMP Model
+    # Initialize the JuMP Model
     model = Model()
 
+    # Add variables 
     _add_acuc_var!(model, data)
 
+    # Add objective
     _add_mincost_obj!(model, data)
 
-    # 5. Constraints
-    
-
-
+    # Add constraints
     _add_gen_limits!(model, data)
 
     _add_polar_branchflow!(model, data)
