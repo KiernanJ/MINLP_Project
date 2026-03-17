@@ -47,7 +47,6 @@ function _add_acuc_var!(model::JuMP.Model, buses, branches, gens)
     @variable(model, q_fr[keys(branches)])
     @variable(model, p_to[keys(branches)])
     @variable(model, q_to[keys(branches)])
-
 end
 
 
@@ -72,45 +71,35 @@ function _add_acuc_var!(model::JuMP.Model, buses, branches, gens; T::Vector{Any}
     @variable(model, q_to[keys(branches), T])
 end
 
+function _add_mincost_obj!(model::JuMP.Model, gens)
+    """
+    Add min cost objective function
+    """
 
-function build_single_period_ac_uc(file_path::String)
-    
-    data = _parse_file_data(file_path)
-
-    # 2. Initialize the JuMP Model
-    model = Model()
-
-    # Create dictionaries for easy iteration
-    buses = data["bus"]
-    gens = data["gen"]
-    branches = data["branch"]
-    loads = data["load"]
-
-    
-
-    # 4. Objective Function (Minimize Cost)
-    # Note: Using u[i] to handle the fixed no-load cost (c_0) when the unit is ON
     @objective(model, Min, sum(
         gens[i]["cost"][1] * pg[i]^2 + 
         gens[i]["cost"][2] * pg[i] + 
         gens[i]["cost"][3] * u[i] for i in keys(gens)
     ))
+end
 
-    # 5. Constraints
-    
-    # Reference Bus Angle
-    ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
-    for i in ref_buses
-        @constraint(model, va[i] == 0.0)
-    end
 
-    # Generator Operational Limits tied to Commitment Status
-    for (i, gen) in gens
-        @constraint(model, pg[i] >= gen["pmin"] * u[i])
-        @constraint(model, pg[i] <= gen["pmax"] * u[i])
-        @constraint(model, qg[i] >= gen["qmin"] * u[i])
-        @constraint(model, qg[i] <= gen["qmax"] * u[i])
-    end
+function _add_mincost_obj!(model::JuMP.Model, gens; T::Vector{Any})
+    """
+    Add min cost objective function for mp-ac-uc-opf
+    """
+
+    @objective(model, Min, sum( sum(
+        gens[i]["cost"][1] * pg[i, t]^2 + 
+        gens[i]["cost"][2] * pg[i, t] + 
+        gens[i]["cost"][3] * u[i, t] for i in keys(gens)
+        )) for t in T)
+end
+
+function _add_polar_branchflow!(model::JuMP.Model, branches)
+    """
+    Add branch flows in polar coordinates
+    """
 
     # Branch Power Flow Constraints (AC Polar Formulation)
     for (i, branch) in branches
@@ -146,6 +135,43 @@ function build_single_period_ac_uc(file_path::String)
         @constraint(model, p_fr[i]^2 + q_fr[i]^2 <= branch["rate_a"]^2)
         @constraint(model, p_to[i]^2 + q_to[i]^2 <= branch["rate_a"]^2)
     end
+end
+
+
+function build_single_period_ac_uc(file_path::String)
+    
+    data = _parse_file_data(file_path)
+
+    # 2. Initialize the JuMP Model
+    model = Model()
+
+    # Create dictionaries for easy iteration
+    buses = data["bus"]
+    gens = data["gen"]
+    branches = data["branch"]
+    loads = data["load"]
+
+    _add_acuc_var!(model, buses, brances, gens)
+
+    _add_mincost_obj!(model, gens)
+
+    # 5. Constraints
+    
+    # Reference Bus Angle
+    ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
+    for i in ref_buses
+        @constraint(model, va[i] == 0.0)
+    end
+
+    # Generator Operational Limits tied to Commitment Status
+    for (i, gen) in gens
+        @constraint(model, pg[i] >= gen["pmin"] * u[i])
+        @constraint(model, pg[i] <= gen["pmax"] * u[i])
+        @constraint(model, qg[i] >= gen["qmin"] * u[i])
+        @constraint(model, qg[i] <= gen["qmax"] * u[i])
+    end
+
+    _add_polar_branchflow!(model, branches)
 
     # Nodal Power Balance (Kirchhoff's Current Law)
     for (i, bus) in buses
