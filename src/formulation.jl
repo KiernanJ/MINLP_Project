@@ -20,6 +20,17 @@ struct MatpowerData
     gens::Dict{String, Any}
     branches::Dict{String, Any}
     loads::Dict{String, Any}
+    shunts::Dict{String, Any}
+end
+
+function MatpowerData(data::Dict{String, Any})
+    return MatpowerData(
+        data["bus"],
+        data["gen"],
+        data["branch"],
+        data["load"],
+        get(data, "shunt", Dict{String, Any}()) # Default to empty Dict
+    )
 end
 
 
@@ -31,16 +42,29 @@ function _parse_file_data(file_path::String)::MatpowerData
     PowerModels.standardize_cost_terms!(data, order=2)
     PowerModels.calc_thermal_limits!(data)
 
-    return MatpowerData(data["bus"], data["gen"], data["branch"], data["load"])
+    return MatpowerData(data["bus"], data["gen"], data["branch"], data["load"], get(data, "shunt", Dict{String, Any}()))
 end
 
-function _unpack_matpowerdata(data::MatpowerData)
-    buses = data.buses
-    gens = data.gens
-    branches = data.branches
-    loads = data.loads
-    return buses, gens, branches, loads
-end
+# function _unpack_matpowerdata(data::MatpowerData)
+#     buses = data.buses
+#     gens = data.gens
+#     branches = data.branches
+#     loads = data.loads
+#     shunts = data.shunts
+#     # return buses, gens, branches, loads
+# end
+
+# function _unpack_matpowerdatashunt(data::MatpowerDataShunt)
+#     buses = data.buses
+#     gens = data.gens
+#     branches = data.branches
+#     loads = data.loads
+#     shunts = data.shunts
+
+#     return buses, gens, branches, loads, shunts
+# end
+
+
 
 function _add_acuc_var!(model::JuMP.Model, data::MatpowerData)
     """
@@ -48,7 +72,8 @@ function _add_acuc_var!(model::JuMP.Model, data::MatpowerData)
     If mp == true, add multi-period OPF formulation variables
     """
     # single period opf
-    buses, gens, branches, _ = _unpack_matpowerdata(data)
+    # buses, gens, branches, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # 3. Define Variables
     @variable(model, va[keys(buses)]) # Voltage angle
@@ -71,7 +96,8 @@ function _add_acuc_var!(model::JuMP.Model, data::MatpowerData, T::Vector{Any})
     Adds mulit-period ACUC variables
     """
     # multi period opf
-    buses, gens, branches, _ = _unpack_matpowerdata(data)
+    # buses, gens, branches, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # 3. Define Variables
     @variable(model, va[keys(buses), T]) # Voltage angle
@@ -93,7 +119,8 @@ function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData)
     Add min cost objective function
     """
 
-    _, gens, _, _ = _unpack_matpowerdata(data)
+    # _, gens, _, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     @objective(model, Min, sum(
         gens[i]["cost"][1] * model[:pg][i]^2 + 
@@ -109,7 +136,8 @@ function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData, T::Vector{Any}
     """
 
 
-    _, gens, _, _ = _unpack_matpowerdata(data)
+    # _, gens, _, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
 
     @objective(model, Min, sum( sum(
@@ -120,7 +148,8 @@ function _add_mincost_obj!(model::JuMP.Model, data::MatpowerData, T::Vector{Any}
 end
 
 function _add_ref_limits!(model::JuMP.Model, data::MatpowerData)
-    buses, _, _, _ = _unpack_matpowerdata(data)
+    # buses, _, _, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Reference Bus Angle
     ref_buses = [k for (k,v) in buses if v["bus_type"] == 3]
@@ -131,7 +160,8 @@ end
 
 function _add_gen_limits!(model::JuMP.Model, data::MatpowerData)
     
-    _, gens, _, _ = _unpack_matpowerdata(data)
+    # _, gens, _, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Generator Operational Limits tied to Commitment Status
     for (i, gen) in gens
@@ -148,7 +178,8 @@ function _add_polar_branchflow!(model::JuMP.Model, data::MatpowerData)
     """
 
 
-    _, _, branches, _ = _unpack_matpowerdata(data)
+    # _, _, branches, _ = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Branch Power Flow Constraints (AC Polar Formulation)
     for (i, branch) in branches
@@ -188,7 +219,8 @@ end
 
 function _add_node_bal!(model::JuMP.Model, data::MatpowerData)
 
-    buses, gens, branches, loads = _unpack_matpowerdata(data)
+    # buses, gens, branches, loads, shunts = _unpack_matpowerdata(data)
+    buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
 
     # Nodal Power Balance (Kirchhoff's Current Law)
     for (i, bus) in buses
@@ -200,15 +232,24 @@ function _add_node_bal!(model::JuMP.Model, data::MatpowerData)
 
         pd = sum(l["pd"] for l in bus_loads; init=0.0)
         qd = sum(l["qd"] for l in bus_loads; init=0.0)
-        gs = bus["gs"]; bs = bus["bs"]
+        
+        local gs
+        local bs
+        # println(shunts[i])
+        if haskey(shunts, i) # if there exists gs, bs
+            println(shunts[i])
+            gs = shunts[i]["gs"]; bs = shunts[i]["bs"]
+        else
+            gs = 0; bs = 0
+        end
 
         @constraint(model, 
-            sum(pg[g] for g in bus_gens; init=0.0) - pd - gs * vm[i]^2 == 
-            sum(p_fr[b] for b in br_fr; init=0.0) + sum(p_to[b] for b in br_to; init=0.0)
+            sum(model[:pg][g] for g in bus_gens; init=0.0) - pd - gs * model[:vm][i]^2 == 
+            sum(model[:p_fr][b] for b in br_fr; init=0.0) + sum(model[:p_to][b] for b in br_to; init=0.0)
         )
         @constraint(model, 
-            sum(qg[g] for g in bus_gens; init=0.0) - qd + bs * vm[i]^2 == 
-            sum(q_fr[b] for b in br_fr; init=0.0) + sum(q_to[b] for b in br_to; init=0.0)
+            sum(model[:qg][g] for g in bus_gens; init=0.0) - qd + bs * model[:vm][i]^2 == 
+            sum(model[:q_fr][b] for b in br_fr; init=0.0) + sum(model[:q_to][b] for b in br_to; init=0.0)
         )
     end
 end
@@ -217,6 +258,7 @@ end
 function build_single_period_ac_uc(file_path::String)
     
     data = _parse_file_data(file_path)
+    # data_s = _parse_file_data_shunt(file_path)
 
     # Create dictionaries for easy iteration
     # buses = data.buses
@@ -225,7 +267,7 @@ function build_single_period_ac_uc(file_path::String)
     # loads = data.loads
 
     # Initialize the JuMP Model
-    model = Model()
+    model = Model(Gurobi.Optimizer)
 
     # Add variables 
     _add_acuc_var!(model, data)
