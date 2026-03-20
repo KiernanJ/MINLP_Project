@@ -154,13 +154,16 @@ function build_single_ac_uc_rectangular(file_path::String)
 
 end
 
-function build_convex_ac_uc(file_path::String, node_voltages)
+function build_convex_ac_uc(file_path::String, node_vr, node_vi)
     """
     Using Constante-Flores and Li 2026 convex QCQP approximation of ACPF
     The reformulation comes from: 
     c_ii = vr^2 + vi^2 forall n (1l)
     c_ij = vi_i vi_j + vr_i vr_j forall i,j in E (1m)
     s_ij = vr_i vi_j - vr_j vi_i forall i,j in E (1n)
+
+    * node_vr - dictionary that contains previous real voltage information for each bus
+    * node_vi - dictionary that contains previous imaginary voltage information for each bus
     """
     data = _parse_file_data(file_path)
     T = [1]
@@ -170,7 +173,7 @@ function build_convex_ac_uc(file_path::String, node_voltages)
 
     # Add variables 
     _add_acuc_var_rectangular!(model, data, T, true)
-    _add_convex_constraints!(model, data, T, node_voltages)
+    _add_convex_constraints!(model, data, T, node_vr, node_vi)
 
     # Add objective
     _add_mincost_obj!(model, data, T)
@@ -182,6 +185,19 @@ function build_convex_ac_uc(file_path::String, node_voltages)
 
     return model
 end
+
+function get_old_voltages(model::JuMP.Model, data::MatpowerData)
+    node_vr = Dict()
+    node_vi = Dict()
+    
+    for (i, bus) in data.buses
+        node_vr[i] = value.(model[:vr][i,1])
+        node_vi[i] = value.(model[:vi][i,1])
+    end
+
+    return node_vr, node_vi
+end
+
 
 
 function _parse_file_data(file_path::String)::MatpowerData
@@ -237,9 +253,9 @@ function _add_acuc_var_rectangular!(model::JuMP.Model, data::MatpowerData, T::Ve
     @variable(model, c_ii[i in keys(buses), T])
 
     edges = _get_edges(data) # vector of tuples listing the connections
-
-    @constraint(model, [t in T], bus["vmin"]^2 <= model[:c_ii][i,t] <= bus["vmax"]^2) #1i
-    
+    for (i,bus) in buses
+        @constraint(model, [t in T], bus["vmin"]^2 <= model[:c_ii][i,t] <= bus["vmax"]^2) #1i
+    end
     # for (i, j) in edges
         # define only for edges
     @variable(model, c_ij[e in edges,T])
@@ -282,23 +298,43 @@ function _add_convex_constraints!(model::JuMP.Model, data::MatpowerData, T::Vect
     """
 
     buses, gens, branches, loads, shunts = (data.buses, data.gens, data.branches, data.loads, data.shunts)
-
-    @variable(model, xi_c[i in keys(buses),T] >= 0) # slack
-    @variable(model, xij_c[e in edges,T] >= 0) # slack
-    @variable(model, xij_s[e in edges,T] >= 0) # slack
+    edges = _get_edges(data) # vector of tuples listing the connections
+    
+    @variable(model, xi_c[i in keys(buses),T] >= 0) # slack, 4h
+    @variable(model, xij_c[e in edges,T] >= 0) # slack, 4i
+    @variable(model, xij_s[e in edges,T] >= 0) # slack, 4j
 
     for (i, bus) in buses
         @constraint(model, [t in T], model[:c_ii][i, t] >= model[:vr][i,t]^2 + model[:vi][i,t]^2) #4b
         @constraint(model, [t in T], model[:c_ii][i, t] <= 
             2*(node_vr[i] * model[:vr][i,t] + node_vi[i] * model[:vi][i,t]) -
             (node_vr[i]^2 + node_vi[i]^2) + xi_c[i,t]) #4c
-
-        @constraint(model, [t in T], model[:c_ii][i, t] <= 
-            2*(node_vr[i] * model[:vr][i,t] + node_vi[i] * model[:vi][i,t]) -
-            (node_vr[i]^2 + node_vi[i]^2) + xi_c[i,t]) #4b
-             
     end
 
+    for (i,j) in edges, t in T
+        e = (i,j)
+        i = string(i); j = string(j)
+        vr_i = model[:vr][i,t]; vr_j = model[:vr][j,t]
+        vi_i = model[:vi][i,t]; vi_j = model[:vi][j,t]
+        xij_c = model[:xij_c][e, t]; xij_s = model[:xij_s][e, t]
+        c_ij = model[:c_ij][e,t]; s_ij = model[:s_ij][e,t]
+
+        @constraint(model, (vr_i + vr_j)^2 + (vi_i + vi_j)^2 + 4*c_ij <=
+            xij_c + 2*(vr_i - vr_j)*(node_vr[i] - node_vr[j]) + 2*(vi_i - vi_j)*(node_vi[i] - node_vi[j]) - 
+            ((node_vr[i] - node_vr[j])^2 + (node_vi[i] - node_vi[j])^2)) # 4d
+
+        @constraint(model, (vr_i - vr_j)^2 + (vi_i - vi_j)^2 + 4*c_ij <=
+            xij_c + 2*(vr_i + vr_j)*(node_vr[i] + node_vr[j]) + 2*(vi_i + vi_j)*(node_vi[i] + node_vi[j]) - 
+            ((node_vr[i] + node_vr[j])^2 + (node_vi[i] + node_vi[j])^2)) # 4e
+             
+        @constraint(model, (vr_i - vi_j)^2 + (vr_j + vi_i)^2 + 4*s_ij <=
+            xij_s + 2*(vr_i + vi_j)*(node_vr[i] + node_vi[j]) + 2*(vr_j - vi_i)*(node_vr[j] + node_vi[i]) - 
+            ((node_vr[i] + node_vi[j])^2 + (node_vr[j] - node_vi[i])^2)) # 4f
+
+        @constraint(model, (vr_i + vi_j)^2 + (vr_j - vi_i)^2 - 4*s_ij <=
+            xij_s + 2*(vr_i - vi_j)*(node_vr[i] - node_vi[j]) + 2*(vr_j + vi_i)*(node_vr[j] + node_vi[i]) - 
+            ((node_vr[i] - node_vi[j])^2 + (node_vr[j] + node_vi[i])^2)) # 4f
+    end
 
 end
 
