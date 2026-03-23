@@ -15,24 +15,36 @@ https://link.springer.com/article/10.1007/s11081-026-10079-4?utm_source=rct_cong
 
 # Initialize the AC OPF with UC
 
-function main()
-    convex_ac_uc("data/case14.m", params)
-end
+# function main()
+#     convex_ac_uc("data/case14.m", params)
+# end
 
-function sample_MINLP()
+# function sample_MINLP()
     
-end
+# end
 
 
 """
     solve_instances(parameters::Vector{Vector{Float64}})
 
-Iterates through parameters with a progress bar.
+Here we are just trying to solve one instance of the convex ac uc problem given a set of parameters
 """
 function solve_convex_MINLP(file_path::String, parameters)
     u_dim = length(parameters[1])
-    n_cases = length(parameters)
-    model, x_vars, u_vars = convex_ac_uc(file_path, u_dim)
+
+    # build the optimization problme
+
+    model = convex_ac_uc(file_path, parameters["node_vr"], parameters["node_vi"])
+    # solve the optimization problme
+    optimize!(model)
+    
+    x_vars = Dict(); u_vars = Dict() # here are the u and x variables from the solved instances
+    # u_vars should just be (n_bus)*2
+    # x_vars should contain vr, vi, c_ii, c_ij, s_ij, u, pg, qg, p_fr, q_fr, p_to ?
+    
+
+
+    u_vars[]
     
     results = DataFrame(u = Vector{Float64}[], x_opt = Vector{Float64}[], status = String[])
 
@@ -64,3 +76,5 @@ function solve_convex_MINLP(file_path::String, parameters)
     
     return results
 end
+
+

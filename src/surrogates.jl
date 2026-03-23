@@ -18,10 +18,10 @@ Here I define functions that apply to:
 """
 
 
-struct TrainingData
-    u_bar::Vector{Float64}
-    x_star::Vector{Float64}
-end  
+# struct TrainingData
+#     u_bar::Vector{Float64}
+#     x_star::Vector{Float64}
+# end  
 
 # (1) Embedding the QCQP
 
