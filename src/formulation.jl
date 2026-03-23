@@ -55,7 +55,11 @@ function convex_ac_uc(file_path::String, params)
     * file_path: string going to the .m file for the IEEE library
     * params: Dict that contains the parameters that we are training on: loads and base voltages
     """
+    # check the 'params' parameter to ensure that it fites for the function build_convex_ac_uc()
+    # 1. 
 
+
+    return build_convex_ac_uc(file_path, params["node_vr"], params["node_vi"])
 end
 
 function build_single_period_ac_uc_polar(file_path::String)    
@@ -172,7 +176,8 @@ function build_convex_ac_uc(file_path::String, node_vr, node_vi, node_pd=nothing
 
     * node_vr - dictionary that contains previous real voltage information for each bus
     * node_vi - dictionary that contains previous imaginary voltage information for each bus
-    * 
+    * node_pd - dictionary that contains the active power demand for each node
+    * node_qd - dictionary that contains the reactive power demand for each node
     """
     data = _parse_file_data(file_path)
     T = [1]
