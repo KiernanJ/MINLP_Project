@@ -29,10 +29,10 @@ end
 
 Iterates through parameters with a progress bar.
 """
-function solve_convex_MINLP(parameters)
+function solve_convex_MINLP(file_path::String, parameters)
     u_dim = length(parameters[1])
     n_cases = length(parameters)
-    model, x_vars, u_vars = create_model(u_dim)
+    model, x_vars, u_vars = convex_ac_uc(file_path, u_dim)
     
     results = DataFrame(u = Vector{Float64}[], x_opt = Vector{Float64}[], status = String[])
 

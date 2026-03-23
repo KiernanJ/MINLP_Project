@@ -1,19 +1,14 @@
+module formulation
+
 # Optimization Problem Structure
 using JuMP, DiffOpt, Ipopt, Gurobi
 
 using PowerModels
 
-# Surrogate Model Architecture
-using Flux
-
+export convex_ac_uc, build_convex_ac_uc
 """
 Here is where we will maintain the problem structure and the core functions to running this problem.
 """
-
-struct TrainingData
-    u_bar::Vector{Float64}
-    x_star::Vector{Float64}
-end  
 
 struct MatpowerData
     buses::Dict{String, Any}
@@ -575,4 +570,6 @@ function _add_node_bal_rectangular!(model::JuMP.Model, data::MatpowerData, deman
             sum(model[:q_fr][b, t] for b in br_fr; init=0.0) + sum(model[:q_to][b, t] for b in br_to; init=0.0)
         )
     end
+end
+
 end
