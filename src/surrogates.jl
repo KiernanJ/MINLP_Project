@@ -99,7 +99,99 @@ function load_repertoire(path::String)::Vector{TrainingDataPoint}
 end
 
 
-# (2) Embedding the convex QCQP into the NN
+# ---------------------------------------------------------------------------
+# Surrogate neural network: encoding and architecture
+# ---------------------------------------------------------------------------
+
+"""
+    encode_u(point) -> Vector{Float32}
+
+Flatten `(node_vr, node_vi)` from a `TrainingDataPoint` into a 1-D input vector.
+Buses are ordered by numeric ID.
+
+Layout: `[vr["1"], …, vr["n"], vi["1"], …, vi["n"]]`
+"""
+function encode_u(point::TrainingDataPoint)::Vector{Float32}
+    bus_ids = sort(collect(keys(point.node_vr)), by=k -> parse(Int, k))
+    return Float32[
+        [point.node_vr[i] for i in bus_ids]...,
+        [point.node_vi[i] for i in bus_ids]...,
+    ]
+end
+
+"""
+    encode_x(point) -> Vector{Float32}
+
+Flatten `x_opt` from a `TrainingDataPoint` into a 1-D target vector.
+Keys within each variable group are sorted for a consistent layout across all points.
+
+Layout (groups in order):
+`vr, vi, c_ii` (per bus) | `c_ij, s_ij` (per edge) |
+`u, pg, qg` (per gen) | `p_fr, q_fr, p_to, q_to` (per branch) |
+`xi_c` (per bus) | `xij_c, xij_s` (per edge)
+"""
+function encode_x(point::TrainingDataPoint)::Vector{Float32}
+    x        = point.x_opt
+    bus_ids  = sort(collect(keys(x["vr"])),    by=k -> parse(Int, k))
+    gen_ids  = sort(collect(keys(x["pg"])),    by=k -> parse(Int, k))
+    br_ids   = sort(collect(keys(x["p_fr"])), by=k -> parse(Int, k))
+    edge_ids = sort(collect(keys(x["c_ij"])))  # (Int,Int) tuples, lexicographic
+
+    return Float32[
+        [x["vr"][i]    for i in bus_ids]...,
+        [x["vi"][i]    for i in bus_ids]...,
+        [x["c_ii"][i]  for i in bus_ids]...,
+        [x["c_ij"][e]  for e in edge_ids]...,
+        [x["s_ij"][e]  for e in edge_ids]...,
+        [x["u"][g]     for g in gen_ids]...,
+        [x["pg"][g]    for g in gen_ids]...,
+        [x["qg"][g]    for g in gen_ids]...,
+        [x["p_fr"][b]  for b in br_ids]...,
+        [x["q_fr"][b]  for b in br_ids]...,
+        [x["p_to"][b]  for b in br_ids]...,
+        [x["q_to"][b]  for b in br_ids]...,
+        [x["xi_c"][i]  for i in bus_ids]...,
+        [x["xij_c"][e] for e in edge_ids]...,
+        [x["xij_s"][e] for e in edge_ids]...,
+    ]
+end
+
+
+"""
+    build_ffnn(input_dim, output_dim, hidden_dims; activation) -> Chain
+
+Build a feedforward neural network u → x̂.
+
+# Arguments
+- `input_dim::Int`: length of the encoded u vector (output of `encode_u`)
+- `output_dim::Int`: length of the encoded x vector (output of `encode_x`)
+- `hidden_dims::Vector{Int}`: width of each hidden layer, e.g. `[64, 64]`
+- `activation`: activation applied to every hidden layer (default: `relu`)
+
+The output layer is linear (no activation) so the network is unconstrained in range.
+
+# Example
+```julia
+nn = build_ffnn(28, 231, [128, 128])   # case14: 28 inputs, 231 outputs
+û  = nn(encode_u(point))
+```
+"""
+function build_ffnn(
+    input_dim::Int,
+    output_dim::Int,
+    hidden_dims::Vector{Int};
+    activation = relu,
+)::Chain
+    dims = [input_dim; hidden_dims; output_dim]
+    layers = []
+    for i in 1:(length(dims) - 2)
+        push!(layers, Dense(dims[i], dims[i+1], activation))
+    end
+    push!(layers, Dense(dims[end-1], dims[end]))  # linear output
+    return Chain(layers...)
+end
+
+
 # (3) Gradient of the loss function for decision-focused training
 
 end
