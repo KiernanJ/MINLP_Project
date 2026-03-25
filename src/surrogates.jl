@@ -3,8 +3,9 @@ module surrogates
 using DiffOpt
 using Flux
 using JuMP
+using JLD2
 
-include("formulation.jl")
+include(joinpath(@__DIR__, "formulation.jl"))
 using .formulation
 
 """
@@ -68,6 +69,33 @@ function gather_training_data(file_name::String, node_vr::Dict, node_vi::Dict)
     )
 
     return TrainingDataPoint(node_vr, node_vi, x_opt, status)
+end
+
+
+# ---------------------------------------------------------------------------
+# Repertoire: saving and loading collections of TrainingDataPoints
+# ---------------------------------------------------------------------------
+
+"""
+    save_repertoire(points, path)
+
+Append `points` (a `Vector{TrainingDataPoint}`) to a JLD2 repertoire file at `path`.
+If the file already exists, the new points are merged with the existing ones.
+"""
+function save_repertoire(points::Vector{TrainingDataPoint}, path::String)
+    existing = isfile(path) ? load_repertoire(path) : TrainingDataPoint[]
+    merged = vcat(existing, points)
+    jldsave(path; repertoire=merged)
+    println("Saved $(length(merged)) total points to $path ($(length(points)) new).")
+end
+
+"""
+    load_repertoire(path)
+
+Load a `Vector{TrainingDataPoint}` from a JLD2 repertoire file at `path`.
+"""
+function load_repertoire(path::String)::Vector{TrainingDataPoint}
+    return load(path, "repertoire")
 end
 
 
