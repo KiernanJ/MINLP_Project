@@ -4,6 +4,9 @@ using DiffOpt
 using Flux
 using JuMP
 using JLD2
+using PowerModels
+using ProgressMeter
+using Random
 
 include(joinpath(@__DIR__, "formulation.jl"))
 using .formulation
@@ -69,6 +72,74 @@ function gather_training_data(file_name::String, node_vr::Dict, node_vi::Dict)
     )
 
     return TrainingDataPoint(node_vr, node_vi, x_opt, status)
+end
+
+
+"""
+    sample_training_data(file_name, n_samples; save_path) -> Vector{TrainingDataPoint}
+
+Generate `n_samples` training points by Latin Hypercube Sampling over per-bus
+voltage bounds and solving the convex AC OPF+UC for each sample.
+
+Bounds (derived from Matpower bus data):
+- `node_vr[i]` ∈ `[vmin[i], vmax[i]]`
+- `node_vi[i]` ∈ `[-vmax[i], vmax[i]]`
+
+If `save_path` is provided the resulting repertoire is saved (appended) to that
+JLD2 file via `save_repertoire`.
+
+Failed solves are retained in the output with an empty `x_opt` so the caller
+can inspect or filter them.
+"""
+function sample_training_data(
+    file_name::String,
+    n_samples::Int;
+    save_path::Union{String, Nothing} = nothing,
+)::Vector{TrainingDataPoint}
+
+    # Parse bus data to extract per-bus voltage bounds
+    raw = PowerModels.parse_file(file_name)
+    PowerModels.standardize_cost_terms!(raw, order=2)
+    PowerModels.calc_thermal_limits!(raw)
+    buses = raw["bus"]
+
+    bus_ids = sort(collect(keys(buses)), by = k -> parse(Int, k))
+    n_buses = length(bus_ids)
+    n_dims  = 2 * n_buses  # vr dims first, then vi dims
+
+    # [vr_lb..., vi_lb...]  and  [vr_ub..., vi_ub...]
+    lb = Float64[
+        [buses[i]["vmin"] for i in bus_ids]...,   # vr lower
+        [-buses[i]["vmax"] for i in bus_ids]...,  # vi lower
+    ]
+    ub = Float64[
+        [buses[i]["vmax"] for i in bus_ids]...,   # vr upper
+        [buses[i]["vmax"] for i in bus_ids]...,   # vi upper
+    ]
+
+    # Latin Hypercube Sampling — each dimension stratified independently
+    lhs = Matrix{Float64}(undef, n_samples, n_dims)
+    for d in 1:n_dims
+        perm = randperm(n_samples)
+        for s in 1:n_samples
+            u = (perm[s] - 1 + rand()) / n_samples   # uniform in stratum
+            lhs[s, d] = lb[d] + (ub[d] - lb[d]) * u
+        end
+    end
+
+    # Solve one instance per sample row
+    points = TrainingDataPoint[]
+    sizehint!(points, n_samples)
+
+    @showprogress "Sampling training data: " for s in 1:n_samples
+        node_vr = Dict(bus_ids[k] => lhs[s, k]           for k in 1:n_buses)
+        node_vi = Dict(bus_ids[k] => lhs[s, n_buses + k] for k in 1:n_buses)
+        push!(points, gather_training_data(file_name, node_vr, node_vi))
+    end
+
+    isnothing(save_path) || save_repertoire(points, save_path)
+
+    return points
 end
 
 
@@ -160,11 +231,14 @@ end
 """
     build_ffnn(input_dim, output_dim, hidden_dims; activation) -> Chain
 
-Build a feedforward neural network u → x̂.
+Build a feedforward neural network u → θ̂.
+
+The FFNN predicts the linearization point θ = (node_vr, node_vi) for each bus,
+which defines the linear cuts A(u, θ)x ≤ B(u, θ) inside the convex OPF layer.
 
 # Arguments
 - `input_dim::Int`: length of the encoded u vector (output of `encode_u`)
-- `output_dim::Int`: length of the encoded x vector (output of `encode_x`)
+- `output_dim::Int`: 2 * n_buses  (predicted node_vr and node_vi for each bus)
 - `hidden_dims::Vector{Int}`: width of each hidden layer, e.g. `[64, 64]`
 - `activation`: activation applied to every hidden layer (default: `relu`)
 
@@ -172,8 +246,8 @@ The output layer is linear (no activation) so the network is unconstrained in ra
 
 # Example
 ```julia
-nn = build_ffnn(28, 231, [128, 128])   # case14: 28 inputs, 231 outputs
-û  = nn(encode_u(point))
+nn = build_ffnn(28, 28, [64, 64])   # case14: 28 inputs → 28 outputs (node_vr, node_vi)
+θ̂  = nn(encode_u(point))            # predicted linearization point
 ```
 """
 function build_ffnn(
@@ -192,6 +266,116 @@ function build_ffnn(
 end
 
 
-# (3) Gradient of the loss function for decision-focused training
+# ---------------------------------------------------------------------------
+# (3) Differentiable OPF layer + end-to-end surrogate
+# ---------------------------------------------------------------------------
+#
+# ARCHITECTURE
+# ============
+#
+#   u (node voltages)
+#     │
+#     ▼
+#   FFNN  (learned weights)
+#     │
+#     ▼  θ̂ = (node_vr_pred, node_vi_pred)   shape: 2 × n_buses
+#     │
+#     │  These define the LINEAR CUTS inside the convex QCQP:
+#     │
+#     │    4c:  c_ii[i] ≤ 2(θ̂_vr[i]·vr[i] + θ̂_vi[i]·vi[i])
+#     │                   - (θ̂_vr[i]² + θ̂_vi[i]²) + ξ_c[i]
+#     │    4d–4f: similar bilinear cuts for c_ij, s_ij
+#     │
+#     │  i.e.  A(u, θ̂) x ≤ B(u, θ̂)
+#     │
+#     ▼
+#   OPF LAYER  solve_convex_ac_uc(file, θ̂_vr, θ̂_vi)   [DiffOpt + ChainRules]
+#     │
+#     ▼  x* = (vr*, vi*, pg*, u*, ...)   optimal solution under learned cuts
+#     │
+#     ▼
+#   LOSS  L(x*)   e.g. generation cost, or MSE vs a held-out solution
+#     │
+#     ▼
+#   BACKPROP through OPF layer via rrule → dL/dθ̂ → dL/dW_ffnn
+
+
+# ---------------------------------------------------------------------------
+# PSEUDOCODE: differentiable OPF layer
+# ---------------------------------------------------------------------------
+#
+# The OPF layer wraps build_convex_ac_uc so that DiffOpt can differentiate
+# through it. The key change vs the current formulation is that node_vr and
+# node_vi are declared as Parameter variables (not plain numbers), so DiffOpt
+# tracks their sensitivity.
+#
+# STEP 1 — build a differentiable model
+#
+#   function build_diff_opf(file_name, θ̂_vr, θ̂_vi)
+#       model = DiffOpt.diff_model(Gurobi.Optimizer)
+#
+#       # Declare linearization point as DiffOpt Parameters
+#       @variable(model, node_vr[bus_ids] in Parameter.(θ̂_vr))
+#       @variable(model, node_vi[bus_ids] in Parameter.(θ̂_vi))
+#
+#       # Build the rest of the convex QCQP using node_vr / node_vi
+#       # as the cut coefficients  (A(u, θ) x ≤ B(u, θ))
+#       _add_acuc_var_rectangular!(model, data, T, convex=true)
+#       _add_convex_constraints!(model, data, T, node_vr, node_vi)
+#       _add_mincost_obj!(...)
+#       ...
+#       return model
+#   end
+#
+#
+# STEP 2 — define the solution map + rrule
+#
+#   function opf_layer(file_name, θ̂_vr, θ̂_vi)
+#       model = build_diff_opf(file_name, θ̂_vr, θ̂_vi)
+#       optimize!(model)
+#       return value.(model[:pg])   # or whichever outputs feed the loss
+#   end
+#
+#   function ChainRulesCore.rrule(::typeof(opf_layer), file_name, θ̂_vr, θ̂_vi)
+#       model = build_diff_opf(file_name, θ̂_vr, θ̂_vi)
+#       x_star = opf_layer(file_name, θ̂_vr, θ̂_vi; model=model)
+#
+#       function pullback_opf(dL_dx)
+#           # seed dL/dx* into DiffOpt
+#           DiffOpt.set_reverse_variable.(model, model[:pg], dL_dx)
+#           DiffOpt.reverse_differentiate!(model)
+#
+#           # retrieve dL/dθ̂  (flows back into FFNN)
+#           dθ̂_vr = DiffOpt.get_reverse_parameter.(model, model[:node_vr])
+#           dθ̂_vi = DiffOpt.get_reverse_parameter.(model, model[:node_vi])
+#           return (NoTangent(), NoTangent(), dθ̂_vr, dθ̂_vi)
+#       end
+#       return x_star, pullback_opf
+#   end
+#
+#
+# STEP 3 — end-to-end surrogate model
+#
+#   function surrogate_forward(u_vec, ffnn, file_name, bus_ids)
+#       # u_vec = encode_u(point)  →  shape: 2 * n_buses
+#       θ̂ = ffnn(u_vec)                        # FFNN predicts linearization point
+#       n = length(bus_ids)
+#       θ̂_vr = θ̂[1:n];  θ̂_vi = θ̂[n+1:end]   # split into vr / vi
+#       x_star = opf_layer(file_name, θ̂_vr, θ̂_vi)
+#       return x_star
+#   end
+#
+#
+# STEP 4 — training loop
+#
+#   loss(u_vec, x_true) = sum((surrogate_forward(u_vec, ffnn, ...) .- x_true).^2)
+#
+#   opt = Flux.setup(Adam(), ffnn)
+#   for (u_vec, x_true) in training_data
+#       grads = Flux.gradient(ffnn) do nn
+#           loss(u_vec, x_true)    # gradient flows through OPF layer via rrule
+#       end
+#       Flux.update!(opt, ffnn, grads)
+#   end
 
 end
