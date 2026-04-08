@@ -121,7 +121,8 @@
 %	[4] Constante-Flores, G., & Li, C. (2026). A quadratically-constrained convex approximation for the AC optimal power flow. Optimization and Engineering, 1-23.
 	
 \end{abstract}
-	
+
+\newpage
 \section{Concept}
 
 We are trying to learn the following convex MIQCQP:
@@ -189,24 +190,27 @@ where $D(\cdot)$ is the diagonal matrix of a given vector.
 The lifted rectangular coordinates formulation for the AC OPF problem,
 \begin{subequations}
 	\begin{align}
-		& \min_{\Xi} \sum_{k \in \mathcal{G}} C_k(p_k^{\text{g}}) \tag{1a} \\
+		& \min_{\Xi} \sum_{k \in \mathcal{G}} C_k(p_k^{\text{g}}) \\
 		& \text{subject to} \notag \\
-		& \sum_{k \in \mathcal{G}_i} p_k^{\text{g}} - P_i^{\text{d}} - G_i^{\text{sh}} c_{ii} = \sum_{(i,j) \in \mathcal{E}_i} p_{ij} + \sum_{(j,i) \in \mathcal{E}_i} p_{ji}, \forall i \in \mathcal{N}, \tag{1b} \\
-		& \sum_{k \in \mathcal{G}_i} q_k^{\text{g}} - Q_i^{\text{d}} + B_i^{\text{sh}} c_{ii} = \sum_{(i,j) \in \mathcal{E}_i} q_{ij} + \sum_{(j,i) \in \mathcal{E}_i} q_{ji}, \forall i \in \mathcal{N}, \tag{1c} \\
-		& p_{ij} = \frac{G_{ij}}{T_{ij}^2} c_{ii} - \frac{G_{ij}}{T_{ij}} c_{ij} + \frac{B_{ij}}{T_{ij}} s_{ij}, \forall (i, j) \in \mathcal{E}, \tag{1d} \\
-		& p_{ji} = G_{ij} c_{jj} - \frac{G_{ij}}{T_{ij}} c_{ij} - \frac{B_{ij}}{T_{ij}} s_{ij}, \forall (i, j) \in \mathcal{E}, \tag{1e} \\
-		& q_{ij} = -\frac{B_{ij} + B_{ij}^{\text{sh}}}{T_{ij}^2} c_{ii} + \frac{G_{ij}}{T_{ij}} s_{ij} + \frac{B_{ij}}{T_{ij}} c_{ij}, \forall (i, j) \in \mathcal{E}, \tag{1f} \\
-		& q_{ji} = -\left( B_{ij} + B_{ij}^{\text{sh}} \right) c_{jj} - \frac{G_{ij}}{T_{ij}} s_{ij} + \frac{B_{ij}}{T_{ij}} c_{ij}, \forall (i, j) \in \mathcal{E}, \tag{1g} \\
-		& (p_{ij})^2 + (q_{ij})^2 \leq \overline{S}_{ij}^2, \forall (i, j), (j, i) \in \mathcal{E}, \tag{1h} \\
-		& \underline{V}_i^2 \leq c_{ii} \leq \overline{V}_i^2, \forall i \in \mathcal{N}, \tag{1i} \\
-		& \underline{P}_k \leq p_k^{\text{g}} \leq \overline{P}_k, \forall k \in \mathcal{G}, \tag{1j} \\
-		& \underline{Q}_k \leq q_k^{\text{g}} \leq \overline{Q}_k, \forall k \in \mathcal{G}, \tag{1k} \\
-		& c_{ii} = (v_i^{\text{re}})^2 + (v_i^{\text{im}})^2, \forall i \in \mathcal{N}, \tag{1l} \\
-		& c_{ij} = v_i^{\text{re}} v_j^{\text{re}} + v_i^{\text{im}} v_j^{\text{im}}, \forall (i, j) \in \mathcal{E}, \tag{1m} \\
-		& s_{ij} = v_i^{\text{re}} v_j^{\text{im}} - v_j^{\text{re}} v_i^{\text{im}}, \forall (i, j) \in \mathcal{E}, \tag{1n}
+		& \sum_{k \in \mathcal{G}_i} p_k^{\text{g}} - P_i^{\text{d}} - G_i^{\text{sh}} c_{ii} = \sum_{(i,j) \in \mathcal{E}_i} p_{ij} + \sum_{(j,i) \in \mathcal{E}_i} p_{ji}, \forall i \in \mathcal{N},  \\
+		& \sum_{k \in \mathcal{G}_i} q_k^{\text{g}} - Q_i^{\text{d}} + B_i^{\text{sh}} c_{ii} = \sum_{(i,j) \in \mathcal{E}_i} q_{ij} + \sum_{(j,i) \in \mathcal{E}_i} q_{ji}, \forall i \in \mathcal{N},  \\
+		& p_{ij} = \frac{G_{ij}}{T_{ij}^2} c_{ii} - \frac{G_{ij}}{T_{ij}} c_{ij} + \frac{B_{ij}}{T_{ij}} s_{ij}, \forall (i, j) \in \mathcal{E},  \\
+		& p_{ji} = G_{ij} c_{jj} - \frac{G_{ij}}{T_{ij}} c_{ij} - \frac{B_{ij}}{T_{ij}} s_{ij}, \forall (i, j) \in \mathcal{E},  \\
+		& q_{ij} = -\frac{B_{ij} + B_{ij}^{\text{sh}}}{T_{ij}^2} c_{ii} + \frac{G_{ij}}{T_{ij}} s_{ij} + \frac{B_{ij}}{T_{ij}} c_{ij}, \forall (i, j) \in \mathcal{E},  \\
+		& q_{ji} = -\left( B_{ij} + B_{ij}^{\text{sh}} \right) c_{jj} - \frac{G_{ij}}{T_{ij}} s_{ij} + \frac{B_{ij}}{T_{ij}} c_{ij}, \forall (i, j) \in \mathcal{E}, \\
+		& (p_{ij})^2 + (q_{ij})^2 \leq \overline{S}_{ij}^2, \forall (i, j), (j, i) \in \mathcal{E},  \\
+		& \underline{V}_i^2 \leq c_{ii} \leq \overline{V}_i^2, \forall i \in \mathcal{N},  \\
+		& \underline{P}_k u_k \leq p_k^{\text{g}} \leq \overline{P}_k uk, \forall k \in \mathcal{G},  \\
+		& \underline{Q}_k \leq q_k^{\text{g}} \leq \overline{Q}_k, \forall k \in \mathcal{G},  \\
+		& c_{ii} = (v_i^{\text{re}})^2 + (v_i^{\text{im}})^2, \forall i \in \mathcal{N},  \\
+		& c_{ij} = v_i^{\text{re}} v_j^{\text{re}} + v_i^{\text{im}} v_j^{\text{im}}, \forall (i, j) \in \mathcal{E},  \\
+		& s_{ij} = v_i^{\text{re}} v_j^{\text{im}} - v_j^{\text{re}} v_i^{\text{im}}, \forall (i, j) \in \mathcal{E}, 
 	\end{align}
 \end{subequations}
+where the optimization variables are the following elements
+$$\Xi = \{ u, p^g_k, p_{ij}^{fr}, q_{ij}^{fr}, p_{ij}^{to}, q_{ij}^{to}, c_{ii}, c_{ij}, s_{ij}, v_i^{re}, v_i^{im} \}$$
 
+\section{Convex UC-ACOPF}
 Using Constante-Flores and Li 2026 convex formulation,
 \begin{subequations}
 	\begin{align}

@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  27 MAR 2026 12:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.3.8)  30 MAR 2026 08:25
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -632,17 +632,11 @@ LaTeX Font Info:    Trying to load font information for U+msb on input line 108
 (/usr/local/texlive/2025/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
-Underfull \vbox (badness 10000) has occurred while \output is active []
-
-
 
 [1
 
 {/usr/local/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/loc
 al/texlive/2025/texmf-dist/fonts/enc/dvips/base/8r.enc}]
-Underfull \vbox (badness 10000) has occurred while \output is active []
-
-
 
 
 Package fancyhdr Warning: \headheight is too small (12.0pt): 
@@ -678,13 +672,13 @@ LaTeX2e <2024-11-01> patch level 2
 L3 programming layer <2025-01-18>
  ***********
 Package rerunfilecheck Info: File `maths.out' has not changed.
-(rerunfilecheck)             Checksum: DE13BE09141340DD613DAD22FB1C0681;545.
+(rerunfilecheck)             Checksum: B2499D5DEBE9BF8A184AEEFCF19324BD;666.
  ) 
 Here is how much of TeX's memory you used:
- 15024 strings out of 473190
- 243102 string characters out of 5715801
- 676617 words of memory out of 5000000
- 38008 multiletter control sequences out of 15000+600000
+ 15026 strings out of 473190
+ 243192 string characters out of 5715801
+ 677617 words of memory out of 5000000
+ 38009 multiletter control sequences out of 15000+600000
  576294 words of font info for 80 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  79i,12n,93p,1013b,518s stack positions out of 10000i,1000n,20000p,200000b,200000s
@@ -701,10 +695,10 @@ cal/texlive/2025/texmf-dist/fonts/type1/urw/helvetic/uhvr8a.pfb></usr/local/tex
 live/2025/texmf-dist/fonts/type1/urw/palatino/uplb8a.pfb></usr/local/texlive/20
 25/texmf-dist/fonts/type1/urw/palatino/uplr8a.pfb></usr/local/texlive/2025/texm
 f-dist/fonts/type1/urw/palatino/uplr8a.pfb>
-Output written on maths.pdf (4 pages, 155150 bytes).
+Output written on maths.pdf (4 pages, 158033 bytes).
 PDF statistics:
- 145 PDF objects out of 1000 (max. 8388607)
- 111 compressed objects within 2 object streams
- 39 named destinations out of 1000 (max. 500000)
- 25 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 149 PDF objects out of 1000 (max. 8388607)
+ 115 compressed objects within 2 object streams
+ 40 named destinations out of 1000 (max. 500000)
+ 33 words of extra memory for PDF output out of 10000 (max. 10000000)
 
