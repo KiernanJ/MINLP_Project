@@ -155,7 +155,7 @@ function build_single_ac_uc_rectangular(file_path::String)
     _add_ref_limits_rectangular!(model, data, T) 
     _add_gen_limits!(model, data, T)
     _add_rectangular_branchflow!(model, data, T)
-    _add_node_bal_rectangular!(model, data, T)
+    _add_node_bal_rectangular!(model, data, [1.0])
 
     return model
 
